@@ -60,6 +60,8 @@ _logger = logging.getLogger(__name__)
 _DEFAULT_SAMPLE_ROWS_FOR_SHAP = 2000
 _EVAL_TABLE_FILE_NAME = "eval_results_table.json"
 _Y_PREDICTED_OUTPUT_COLUMN_NAME = "predicted_column"
+_TOKEN_COUNT_METRIC_NAME = "token_count"
+_LATENCY_METRIC_NAME = "latency"
 
 
 def _is_categorical(values):
@@ -1320,8 +1322,10 @@ class DefaultEvaluator(ModelEvaluator):
                     error_code=INVALID_PARAMETER_VALUE,
                 )
 
-            self.metrics_values.update({"latency": MetricValue(scores=pred_latencies)})
-            self.metrics_values.update({"token_count": MetricValue(scores=num_tokens_list)})
+            self.metrics_values.update({_LATENCY_METRIC_NAME: MetricValue(scores=pred_latencies)})
+            self.metrics_values.update(
+                {_TOKEN_COUNT_METRIC_NAME: MetricValue(scores=num_tokens_list)}
+            )
         else:
             model_predictions = self.model.predict(self.X.copy_to_avoid_mutation())
 
@@ -1424,7 +1428,17 @@ class DefaultEvaluator(ModelEvaluator):
             justifications = metric_value.justifications
 
             if scores:
-                columns[f"{metric_name}/score"] = scores
+                append_score = True
+                if metric_name.startswith(prefix) and metric_name[len(prefix) :] in [
+                    _TOKEN_COUNT_METRIC_NAME,
+                    _LATENCY_METRIC_NAME,
+                ]:
+                    append_score = False
+
+                if append_score:
+                    columns[f"{metric_name}/score"] = scores
+                else:
+                    columns[metric_name] = scores
             if justifications:
                 columns[f"{metric_name}/justification"] = justifications
         data = data.assign(**columns)
