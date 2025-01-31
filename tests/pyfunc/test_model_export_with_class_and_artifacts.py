@@ -1236,7 +1236,8 @@ def test_functional_python_model_no_type_hints(tmp_path):
 
     mlflow.pyfunc.save_model(path=tmp_path, python_model=python_model, input_example=[{"a": "b"}])
     model = Model.load(tmp_path)
-    assert model.signature is None
+    assert model.signature.inputs == Schema([ColSpec("string", name="a")])
+    assert model.signature.outputs == Schema([ColSpec("string", name="a")])
 
 
 def list_to_list(x: List[str]) -> List[str]:  # noqa: UP006
@@ -1389,16 +1390,6 @@ def test_functional_python_model_no_arguments(tmp_path):
         MlflowException, match=r"must accept exactly one argument\. Found 0 arguments\."
     ):
         mlflow.pyfunc.save_model(path=tmp_path, python_model=no_arguments)
-
-
-def unsupported_types(x: tuple[str, ...]) -> tuple[str, ...]:
-    return x
-
-
-def test_functional_python_model_unsupported_types(tmp_path):
-    mlflow.pyfunc.save_model(path=tmp_path, python_model=unsupported_types, input_example=["a"])
-    model = Model.load(tmp_path)
-    assert model.signature is None
 
 
 def requires_sklearn(x: list[str]) -> list[str]:
@@ -1666,6 +1657,222 @@ def test_model_save_load_with_resources(tmp_path):
     )
 
     reloaded_model = Model.load(pyfunc_model_path_2)
+    assert reloaded_model.resources == expected_resources
+
+
+def test_model_save_load_with_invokers_resources(tmp_path):
+    pyfunc_model_path = os.path.join(tmp_path, "pyfunc_model")
+    pyfunc_model_path_2 = os.path.join(tmp_path, "pyfunc_model_2")
+
+    expected_resources = {
+        "api_version": "1",
+        "databricks": {
+            "serving_endpoint": [
+                {"name": "databricks-mixtral-8x7b-instruct", "on_behalf_of_user": True},
+                {"name": "databricks-bge-large-en"},
+                {"name": "azure-eastus-model-serving-2_vs_endpoint"},
+            ],
+            "vector_search_index": [
+                {"name": "rag.studio_bugbash.databricks_docs_index", "on_behalf_of_user": True}
+            ],
+            "sql_warehouse": [{"name": "testid"}],
+            "function": [
+                {"name": "rag.studio.test_function_a", "on_behalf_of_user": True},
+                {"name": "rag.studio.test_function_b"},
+            ],
+            "genie_space": [
+                {"name": "genie_space_id_1", "on_behalf_of_user": True},
+                {"name": "genie_space_id_2"},
+            ],
+            "uc_connection": [{"name": "test_connection_1"}, {"name": "test_connection_2"}],
+            "table": [
+                {"name": "rag.studio.table_a", "on_behalf_of_user": True},
+                {"name": "rag.studio.table_b"},
+            ],
+        },
+    }
+    mlflow.pyfunc.save_model(
+        path=pyfunc_model_path,
+        conda_env=_conda_env(),
+        python_model=mlflow.pyfunc.model.PythonModel(),
+        resources=[
+            DatabricksServingEndpoint(
+                endpoint_name="databricks-mixtral-8x7b-instruct", on_behalf_of_user=True
+            ),
+            DatabricksServingEndpoint(endpoint_name="databricks-bge-large-en"),
+            DatabricksServingEndpoint(endpoint_name="azure-eastus-model-serving-2_vs_endpoint"),
+            DatabricksVectorSearchIndex(
+                index_name="rag.studio_bugbash.databricks_docs_index", on_behalf_of_user=True
+            ),
+            DatabricksSQLWarehouse(warehouse_id="testid"),
+            DatabricksFunction(function_name="rag.studio.test_function_a", on_behalf_of_user=True),
+            DatabricksFunction(function_name="rag.studio.test_function_b"),
+            DatabricksGenieSpace(genie_space_id="genie_space_id_1", on_behalf_of_user=True),
+            DatabricksGenieSpace(genie_space_id="genie_space_id_2"),
+            DatabricksUCConnection(connection_name="test_connection_1"),
+            DatabricksUCConnection(connection_name="test_connection_2"),
+            DatabricksTable(table_name="rag.studio.table_a", on_behalf_of_user=True),
+            DatabricksTable(table_name="rag.studio.table_b"),
+        ],
+    )
+
+    reloaded_model = Model.load(pyfunc_model_path)
+    assert reloaded_model.resources == expected_resources
+
+    yaml_file = tmp_path.joinpath("resources.yaml")
+    with open(yaml_file, "w") as f:
+        f.write(
+            """
+            api_version: "1"
+            databricks:
+                vector_search_index:
+                - name: rag.studio_bugbash.databricks_docs_index
+                  on_behalf_of_user: True
+                serving_endpoint:
+                - name: databricks-mixtral-8x7b-instruct
+                  on_behalf_of_user: True
+                - name: databricks-bge-large-en
+                - name: azure-eastus-model-serving-2_vs_endpoint
+                sql_warehouse:
+                - name: testid
+                function:
+                - name: rag.studio.test_function_a
+                  on_behalf_of_user: True
+                - name: rag.studio.test_function_b
+                genie_space:
+                - name: genie_space_id_1
+                  on_behalf_of_user: True
+                - name: genie_space_id_2
+                uc_connection:
+                - name: test_connection_1
+                - name: test_connection_2
+                table:
+                - name: rag.studio.table_a
+                  on_behalf_of_user: True
+                - name: rag.studio.table_b
+            """
+        )
+
+    mlflow.pyfunc.save_model(
+        path=pyfunc_model_path_2,
+        conda_env=_conda_env(),
+        python_model=mlflow.pyfunc.model.PythonModel(),
+        resources=yaml_file,
+    )
+
+    reloaded_model = Model.load(pyfunc_model_path_2)
+    assert reloaded_model.resources == expected_resources
+
+
+def test_model_log_with_invokers_resources(tmp_path):
+    pyfunc_artifact_path = "pyfunc_model"
+
+    expected_resources = {
+        "api_version": "1",
+        "databricks": {
+            "serving_endpoint": [
+                {"name": "databricks-mixtral-8x7b-instruct"},
+                {"name": "databricks-bge-large-en", "on_behalf_of_user": True},
+                {"name": "azure-eastus-model-serving-2_vs_endpoint"},
+            ],
+            "vector_search_index": [
+                {"name": "rag.studio_bugbash.databricks_docs_index", "on_behalf_of_user": True}
+            ],
+            "sql_warehouse": [{"name": "testid", "on_behalf_of_user": True}],
+            "function": [
+                {"name": "rag.studio.test_function_a"},
+                {"name": "rag.studio.test_function_b", "on_behalf_of_user": True},
+            ],
+            "genie_space": [
+                {"name": "genie_space_id_1"},
+                {"name": "genie_space_id_2", "on_behalf_of_user": True},
+            ],
+            "uc_connection": [
+                {"name": "test_connection_1"},
+                {"name": "test_connection_2", "on_behalf_of_user": True},
+            ],
+            "table": [
+                {"name": "rag.studio.table_a"},
+                {"name": "rag.studio.table_b", "on_behalf_of_user": True},
+            ],
+        },
+    }
+    with mlflow.start_run() as run:
+        mlflow.pyfunc.log_model(
+            pyfunc_artifact_path,
+            python_model=mlflow.pyfunc.model.PythonModel(),
+            resources=[
+                DatabricksServingEndpoint(endpoint_name="databricks-mixtral-8x7b-instruct"),
+                DatabricksServingEndpoint(
+                    endpoint_name="databricks-bge-large-en", on_behalf_of_user=True
+                ),
+                DatabricksServingEndpoint(endpoint_name="azure-eastus-model-serving-2_vs_endpoint"),
+                DatabricksVectorSearchIndex(
+                    index_name="rag.studio_bugbash.databricks_docs_index", on_behalf_of_user=True
+                ),
+                DatabricksSQLWarehouse(warehouse_id="testid", on_behalf_of_user=True),
+                DatabricksFunction(function_name="rag.studio.test_function_a"),
+                DatabricksFunction(
+                    function_name="rag.studio.test_function_b", on_behalf_of_user=True
+                ),
+                DatabricksGenieSpace(genie_space_id="genie_space_id_1"),
+                DatabricksGenieSpace(genie_space_id="genie_space_id_2", on_behalf_of_user=True),
+                DatabricksUCConnection(connection_name="test_connection_1"),
+                DatabricksUCConnection(connection_name="test_connection_2", on_behalf_of_user=True),
+                DatabricksTable(table_name="rag.studio.table_a"),
+                DatabricksTable(table_name="rag.studio.table_b", on_behalf_of_user=True),
+            ],
+        )
+    pyfunc_model_uri = f"runs:/{run.info.run_id}/{pyfunc_artifact_path}"
+    pyfunc_model_path = _download_artifact_from_uri(pyfunc_model_uri)
+    reloaded_model = Model.load(os.path.join(pyfunc_model_path, "MLmodel"))
+    assert reloaded_model.resources == expected_resources
+
+    yaml_file = tmp_path.joinpath("resources.yaml")
+    with open(yaml_file, "w") as f:
+        f.write(
+            """
+            api_version: "1"
+            databricks:
+                vector_search_index:
+                - name: rag.studio_bugbash.databricks_docs_index
+                  on_behalf_of_user: True
+                serving_endpoint:
+                - name: databricks-mixtral-8x7b-instruct
+                - name: databricks-bge-large-en
+                  on_behalf_of_user: True
+                - name: azure-eastus-model-serving-2_vs_endpoint
+                sql_warehouse:
+                - name: testid
+                  on_behalf_of_user: True
+                function:
+                - name: rag.studio.test_function_a
+                - name: rag.studio.test_function_b
+                  on_behalf_of_user: True
+                genie_space:
+                - name: genie_space_id_1
+                - name: genie_space_id_2
+                  on_behalf_of_user: True
+                uc_connection:
+                - name: test_connection_1
+                - name: test_connection_2
+                  on_behalf_of_user: True
+                table:
+                - name: "rag.studio.table_a"
+                - name: "rag.studio.table_b"
+                  on_behalf_of_user: True
+            """
+        )
+
+    with mlflow.start_run() as run:
+        mlflow.pyfunc.log_model(
+            pyfunc_artifact_path,
+            python_model=mlflow.pyfunc.model.PythonModel(),
+            resources=yaml_file,
+        )
+    pyfunc_model_uri = f"runs:/{run.info.run_id}/{pyfunc_artifact_path}"
+    pyfunc_model_path = _download_artifact_from_uri(pyfunc_model_uri)
+    reloaded_model = Model.load(os.path.join(pyfunc_model_path, "MLmodel"))
     assert reloaded_model.resources == expected_resources
 
 
@@ -1989,13 +2196,27 @@ def test_predict_as_code():
         model_info = mlflow.pyfunc.log_model(
             "model",
             python_model="tests/pyfunc/sample_code/func_code.py",
-            input_example="string",
+            input_example=["string"],
         )
 
     loaded_model = mlflow.pyfunc.load_model(model_info.model_uri)
     model_input = "asdf"
-    expected_output = f"This was the input: {model_input}"
-    assert loaded_model.predict(model_input) == expected_output
+    expected_output = pd.DataFrame([model_input])
+    pandas.testing.assert_frame_equal(loaded_model.predict([model_input]), expected_output)
+
+
+def test_predict_as_code_with_type_hint():
+    with mlflow.start_run():
+        model_info = mlflow.pyfunc.log_model(
+            "model",
+            python_model="tests/pyfunc/sample_code/func_code_with_type_hint.py",
+            input_example=["string"],
+        )
+
+    loaded_model = mlflow.pyfunc.load_model(model_info.model_uri)
+    model_input = "asdf"
+    expected_output = [model_input]
+    assert loaded_model.predict([model_input]) == expected_output
 
 
 def test_predict_as_code_with_config():
@@ -2003,14 +2224,14 @@ def test_predict_as_code_with_config():
         model_info = mlflow.pyfunc.log_model(
             "model",
             python_model="tests/pyfunc/sample_code/func_code_with_config.py",
-            input_example="string",
+            input_example=["string"],
             model_config="tests/pyfunc/sample_code/config.yml",
         )
 
     loaded_model = mlflow.pyfunc.load_model(model_info.model_uri)
     model_input = "asdf"
     expected_output = f"This was the input: {model_input}, timeout 300"
-    assert loaded_model.predict(model_input) == expected_output
+    assert loaded_model.predict([model_input]) == expected_output
 
 
 def test_model_as_code_pycache_cleaned_up():
@@ -2169,3 +2390,24 @@ def test_pyfunc_model_with_wrong_predict_signature_warning():
 
             def predict_stream(self, _, model_input, params=None):
                 yield model_input
+
+
+def test_pyfunc_model_input_example_with_signature():
+    class Model(mlflow.pyfunc.PythonModel):
+        def predict(self, context, model_input, params=None):
+            return model_input
+
+    signature = infer_signature(["a", "b", "c"])
+    with mlflow.start_run():
+        with pytest.warns(
+            UserWarning, match=r"An input example was not provided when logging the model"
+        ):
+            mlflow.pyfunc.log_model("model", python_model=Model(), signature=signature)
+
+    with mlflow.start_run():
+        with pytest.raises(
+            MlflowException, match=r"Input example does not match the model signature"
+        ):
+            mlflow.pyfunc.log_model(
+                "model", python_model=Model(), signature=signature, input_example=123
+            )

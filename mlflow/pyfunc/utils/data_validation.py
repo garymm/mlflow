@@ -9,13 +9,15 @@ from mlflow.models.signature import (
     _is_context_in_predict_function_signature,
 )
 from mlflow.types.type_hints import (
+    InvalidTypeHintException,
     _convert_data_to_type_hint,
     _infer_schema_from_list_type_hint,
     _is_type_hint_from_example,
     _signature_cannot_be_inferred_from_type_hint,
-    _validate_example_against_type_hint,
+    _validate_data_against_type_hint,
 )
 from mlflow.utils.annotations import filter_user_warnings_once
+from mlflow.utils.warnings_utils import color_warning
 
 _INVALID_SIGNATURE_ERROR_MSG = (
     "Model's `{func_name}` method contains invalid parameters: {invalid_params}. "
@@ -109,16 +111,34 @@ def _get_func_info_if_type_hint_supported(func) -> Optional[FuncInfo]:
             return
         try:
             _infer_schema_from_list_type_hint(type_hint)
+        except InvalidTypeHintException as e:
+            raise MlflowException(
+                f"{e.message} To disable data validation, remove the type hint from the "
+                "predict function. Otherwise, fix the type hint."
+            )
+        # catch other exceptions to avoid breaking model usage
         except Exception as e:
-            warnings.warn(
-                "Type hint used in the model's predict function is not supported "
-                f"for MLflow's schema validation. {e}. "
-                "To enable validation for the input data, specify the input example "
-                "or model signature when logging the model.",
+            color_warning(
+                message="Type hint used in the model's predict function is not supported "
+                f"for MLflow's schema validation. {e} "
+                "Remove the type hint to disable this warning. "
+                "To enable validation for the input data, specify input example "
+                "or model signature when logging the model. ",
+                category=UserWarning,
                 stacklevel=3,
+                color="red",
             )
         else:
             return FuncInfo(input_type_hint=type_hint, input_param_name=input_param_name)
+    else:
+        color_warning(
+            "Add type hints to the `predict` method to enable data validation "
+            "and automatic signature inference during model logging. "
+            "Check https://mlflow.org/docs/latest/model/python_model.html#type-hint-usage-in-pythonmodel"
+            " for more details.",
+            stacklevel=1,
+            color="yellow",
+        )
 
 
 def _model_input_index_in_function_signature(func):
@@ -143,7 +163,7 @@ def _validate_model_input(
         input_pos = model_input_index_in_sig
     if input_pos is not None:
         data = _convert_data_to_type_hint(model_input, type_hint)
-        data = _validate_example_against_type_hint(data, type_hint)
+        data = _validate_data_against_type_hint(data, type_hint)
         if input_pos == "kwargs":
             kwargs[model_input_param_name] = data
         else:
